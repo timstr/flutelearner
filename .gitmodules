@@ -1,0 +1,3 @@
+[submodule "genericneuralnetwork"]
+	path = genericneuralnetwork
+	url = https://github.com/timstr/genericneuralnetwork.git
