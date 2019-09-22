@@ -9,6 +9,8 @@
 #include <complex>
 #include <vector>
 
+const double pi = 3.141592653589793;
+
 // Cooley–Tukey FFT (in-place, divide-and-conquer)
 // Higher memory requirements and redundancy although more intuitive
 void fft(gsl::span<std::complex<double>> x){
@@ -39,8 +41,21 @@ void fft(gsl::span<std::complex<double>> x){
  
     // combine
     for (size_t k = 0; k < N/2; ++k){
-        const auto t = std::polar(1.0, -2.0 * 3.141592653589793 * k / N) * odd[k];
+        const auto t = std::polar(1.0, -2.0 * pi * k / N) * odd[k];
         x[k] = even[k] + t;
         x[k + N / 2] = even[k] - t;
+    }
+}
+
+void ifft(gsl::span<std::complex<double>> x){
+    for (auto& v : x){
+        v = std::conj(v);
+    }
+    // forward fft
+    fft(x);
+ 
+    const auto k = 1.0 / static_cast<double>(x.size());
+    for (auto& v : x){
+        v = std::conj(v) * k;
     }
 }
