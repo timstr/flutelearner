@@ -117,24 +117,18 @@ std::vector<double> getNoteFrequences(std::size_t noteIndex, std::size_t samples
 
     fft(x);
 
-    // extract lower frequencies, take magnitude and normalize
+    // extract lower frequencies, take logarithm of magnitude
     std::vector<double> output;
     output.reserve(numFrequences);
-    double maximum = 0.0;
     for (std::size_t i = 0; i < numFrequences; ++i){
         const auto mag = std::abs(x[i]);
-        output.push_back(mag);
-        maximum = std::max(maximum, mag);
-    }
-    assert(maximum != 0.0);
-    for (auto& o : output){
-        o /= maximum;
+        output.push_back(std::log(std::max(mag, 1e-6)));
     }
 
     return output;
 }
 
-using NetworkType = NeuralNetwork<numNotes, 64, 64, 64, numFrequences>;
+using NetworkType = NeuralNetwork<numNotes, 64, 128, 256, numFrequences>;
 
 auto network = NetworkType{};
 
@@ -166,13 +160,17 @@ void prepareTrainingData(){
     // number of times each traning note is repeated at a random time offset
     const std::size_t upsampling = 128;
 
-    // amplitude of white noise that is added to signal
-    const double noiseAmp = 0.05;
+    // maximum amplitude of random amount of white noise that is added to signal
+    const double maxNoiseAmp = 0.1;
+    auto noiseDist = std::uniform_real_distribution<double>{0.0, maxNoiseAmp};
 
-    auto dist = std::uniform_int_distribution<std::size_t>{0, noteLengthTruncated / 8};
+    // maximum sample offset by which each training example is randomly shifted
+    const std::size_t maxOffset = noteLengthTruncated / 8;
+    auto offsetDist = std::uniform_int_distribution<std::size_t>{0, maxOffset};
+
     for (const auto& noteIndexAndLabel : trainingExamples){
         for (std::size_t i = 0; i < upsampling; ++i){
-            auto input = getNoteFrequences(noteIndexAndLabel.first, dist(randEng), noiseAmp);
+            auto input = getNoteFrequences(noteIndexAndLabel.first, offsetDist(randEng), noiseDist(randEng));
             auto output = std::vector<double>(numNotes, 0.0);
             output.at(noteIndexAndLabel.second) = 1.0;
             trainingData.push_back(std::pair{std::move(input), std::move(output)});
@@ -313,7 +311,7 @@ void train(){
         }
     }};
 
-    trainUntil(0.01);
+    trainUntil(0.001);
 
     done = true;
     inputThread.join();
