@@ -51,19 +51,6 @@ const std::array<std::string, numNotes> noteNames = {
     "C5", "C#5", "D5", "D#5", "E5", "F5", "F#5", "G5", "G#5", "A5", "A#5", "B5"
 };
 
-// The sound containing both the training data and the test data
-sf::SoundBuffer& getInputSound(){
-    static sf::SoundBuffer buff;
-    static bool init;
-    if (!init){
-        std::cout << "Loading input sound...";
-        buff.loadFromFile("../sound/flute.wav");
-        std::cout << " done.\n";
-        init = true;
-    }
-    return buff;
-}
-
 // The number of training examples in the input file.
 // This corresponds to the first 30 seconds of audio
 // at four notes per second
@@ -96,12 +83,12 @@ const auto trainingExamples = std::vector<std::pair<std::size_t, std::size_t>>{
 // Given the index of a note in the input sound, reads the
 // sound at that index, computes the fft, and returns the
 // magnitudes of the positive frequency components
-std::vector<double> getNoteFrequences(std::size_t noteIndex, std::size_t samplesOffset, double noiseAmplitude){
+std::vector<double> getNoteFrequences(const sf::SoundBuffer& buff, std::size_t noteIndex, std::size_t samplesOffset, double noiseAmplitude){
     const std::size_t startSample = noteIndex * noteLength + samplesOffset;
-    if (getInputSound().getChannelCount() != 1){
+    if (buff.getChannelCount() != 1){
         throw std::runtime_error("I though the input was supposed to be mono audio :(");
     }
-    const auto samples = getInputSound().getSamples();
+    const auto samples = buff.getSamples();
 
     std::vector<std::complex<double>> x;
     x.reserve(noteLengthTruncated);
@@ -132,18 +119,18 @@ using NetworkType = NeuralNetwork<numNotes, 64, 128, 256, numFrequences>;
 
 auto network = NetworkType{};
 
-std::pair<std::size_t, double> predict(std::size_t noteIndex){
-    auto x = getNoteFrequences(noteIndex, 0, 0.0);
+std::pair<std::size_t, double> predict(const sf::SoundBuffer& buff, std::size_t noteIndex){
+    auto x = getNoteFrequences(buff, noteIndex, 0, 0.0);
     auto y = network.compute(x);
     auto maxIt = std::max_element(y.begin(), y.end());
     assert(maxIt != y.end());
     return {maxIt - y.begin(), *maxIt};
 }
 
-double trainingAccuracy(){
+double trainingAccuracy(const sf::SoundBuffer& buff){
     std::size_t numCorrect = 0;
     for (const auto& inputAndLabel : trainingExamples){
-        const auto [actualLabel, conf] = predict(inputAndLabel.first);
+        const auto [actualLabel, conf] = predict(buff, inputAndLabel.first);
         if (inputAndLabel.second == actualLabel){
             ++numCorrect;
         }
@@ -154,7 +141,7 @@ double trainingAccuracy(){
 // physical storage for input and output data
 std::vector<std::pair<std::vector<double>, std::vector<double>>> trainingData;
 
-void prepareTrainingData(){
+void prepareTrainingData(const sf::SoundBuffer& buff){
     std::cout << "Preparing training data...";
 
     // number of times each traning note is repeated at a random time offset
@@ -170,7 +157,7 @@ void prepareTrainingData(){
 
     for (const auto& noteIndexAndLabel : trainingExamples){
         for (std::size_t i = 0; i < upsampling; ++i){
-            auto input = getNoteFrequences(noteIndexAndLabel.first, offsetDist(randEng), noiseDist(randEng));
+            auto input = getNoteFrequences(buff, noteIndexAndLabel.first, offsetDist(randEng), noiseDist(randEng));
             auto output = std::vector<double>(numNotes, 0.0);
             output.at(noteIndexAndLabel.second) = 1.0;
             trainingData.push_back(std::pair{std::move(input), std::move(output)});
@@ -192,10 +179,7 @@ std::vector<std::pair<NetworkType::InputType, NetworkType::OutputType>> randomTr
     return ret;
 }
 
-void train(){
-    std::cout << std::fixed;
-    std::cout.precision(15);
-
+void trainNetwork(const sf::SoundBuffer& buff){
     std::atomic<double> rate = 0.05;
     std::atomic<double> momentum = 0.9;
     std::mutex networkMutex, nextUpMutex, lowPriorityMutex;
@@ -231,7 +215,7 @@ void train(){
                 networkMutex.unlock();
                 lowPriorityMutex.unlock();
             }
-            std::cout << "    training accuracy = " << trainingAccuracy() * 100.0 << "%\n";
+            std::cout << "    training accuracy = " << trainingAccuracy(buff) * 100.0 << "%\n";
             std::cout << "    total iterations so far: " << count << '\n';
         }
     };
@@ -311,27 +295,78 @@ void train(){
         }
     }};
 
-    trainUntil(0.001);
+    trainUntil(0.005);
 
     done = true;
     inputThread.join();
 }
 
 int main(){
-    getInputSound();
+    std::cout << std::fixed;
+    std::cout.precision(15);
 
-    prepareTrainingData();
+    const auto train = [](){
+        sf::SoundBuffer trainingBuff;
+        std::cout << "Loading training sound...";
+        trainingBuff.loadFromFile("../sound/train.wav");
+        std::cout << " done.\n";
 
-    network.randomizeWeights();
+        prepareTrainingData(trainingBuff);
 
-    train();
+        network.randomizeWeights();
 
-    const std::size_t testBegin = 30 * 4;
-    const std::size_t testEnd = 108 * 4;
+        trainNetwork(trainingBuff);
+    };
 
-    for (std::size_t i = testBegin; i < testEnd; i++){
-        const auto [label, conf] = predict(i);
-        std::cout << i << " - " << noteNames[label] << '(' << label << "), confidence: " << conf << '\n';
+    const auto test = [](){
+        const std::size_t testBegin = 0;
+        const std::size_t testEnd = (108 - 30) * 4;
+
+        sf::SoundBuffer testBuff;
+        std::cout << "Loading test sound...";
+        testBuff.loadFromFile("../sound/test.wav");
+        std::cout << " done.\n";
+
+        for (std::size_t i = testBegin; i < testEnd; i++){
+            const auto [label, conf] = predict(testBuff, i);
+            std::cout << i << " - " << noteNames[label] << '(' << label << "), confidence: " << conf << '\n';
+        }
+    };
+
+    const auto restore = [](){
+        std::cout << "Please enter a file name:\n";
+        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+        if (std::string line; std::getline(std::cin, line)){
+            try {
+                network.loadWeights(line);
+                std::cout << "Done.\n";
+            } catch (...) {
+                std::cout << "That's a bad file, sorry.\n";
+                return false;
+            }
+        } else {
+            std::cout << "Dang, that didn't work.\n";
+            return false;
+        }
+        return true;
+    };
+
+    std::cout << "Welcome to flutelearner! Please choose an option:\n";
+    std::cout << "    t - load the training data and train the network\n";
+    std::cout << "    r - restore the network from a file and test it\n";
+    char ch;
+    std::cin >> ch;
+    if (ch == 't'){
+        train();
+        test();
+    } else if (ch == 'r'){
+        if (!restore()){
+            return 2;
+        }
+        test();
+    } else {
+        std::cout << "\nwhat?\n\n";
+        return 1;
     }
 
     return 0;
