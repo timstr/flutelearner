@@ -37,7 +37,7 @@ const std::size_t noteLengthTruncated = nextPowerOf2(noteLength) / 2;
 // half as many because negative frequencies are discarded,
 // and 1/8 as many as that because all frequencies above 1500 Hz
 // shouldn't really be needed (the highest expected note frequency
-// is ~997 Hz)
+// is ~988 Hz)
 const std::size_t numFrequences = noteLengthTruncated / 2 / 8;
 
 // the number of distinct notes that appear in the input sound.
